@@ -11,7 +11,11 @@
 //! Any single signer can `freeze` the treasury immediately (an emergency
 //! brake for a suspected key compromise); thawing needs the full threshold.
 //! Proposals expire after `PROPOSAL_TTL_SECS` so stale approvals cannot be
-//! executed months later. Removing a signer cancels the open proposals that
+//! executed months later. Actions that move funds out of the treasury
+//! (`Withdraw`, `VaultDeposit`) additionally wait out
+//! `FUND_MOVEMENT_TIMELOCK_SECS` after creation, so signers and depositors
+//! have a full day to notice and freeze a compromised proposal before any
+//! money leaves. Removing a signer cancels the open proposals that
 //! signer made, so a revoked key cannot leave queued actions behind.
 
 #![no_std]
@@ -24,6 +28,9 @@ use soroban_sdk::{
 
 pub const MAX_SIGNERS: u32 = 10;
 pub const PROPOSAL_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// Delay between a fund-moving proposal and its execution. One day gives
+/// signers time to react if a key is compromised.
+pub const FUND_MOVEMENT_TIMELOCK_SECS: u64 = 24 * 60 * 60;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -46,6 +53,8 @@ pub enum TreasuryError {
     Cancelled = 15,
     VaultNotApproved = 16,
     TooManyVaults = 17,
+    /// A fund-moving proposal was executed before its timelock elapsed.
+    TimelockNotElapsed = 18,
 }
 
 #[contracttype]
@@ -271,6 +280,14 @@ impl Treasury {
         }
 
         let frozen = Self::is_frozen(env.clone());
+        // Fund movements keep the emergency brake as their first check, so a
+        // frozen treasury always reports `Frozen`.
+        if frozen && Self::moves_funds(&proposal.action) {
+            return Err(TreasuryError::Frozen);
+        }
+        if env.ledger().timestamp() < Self::executable_at_of(&proposal) {
+            return Err(TreasuryError::TimelockNotElapsed);
+        }
         match proposal.action.clone() {
             Action::Withdraw(token_id, to, amount) => {
                 if frozen {
@@ -403,6 +420,13 @@ impl Treasury {
         Self::signers(&env)
     }
 
+    /// Earliest timestamp at which `id` can execute. Fund movements wait for
+    /// `FUND_MOVEMENT_TIMELOCK_SECS` after creation; other actions do not.
+    pub fn executable_at(env: Env, id: u64) -> Result<u64, TreasuryError> {
+        let proposal = Self::load(&env, id)?;
+        Ok(Self::executable_at_of(&proposal))
+    }
+
     pub fn threshold(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -437,6 +461,18 @@ impl Treasury {
     // ---------------------------------------------------------------------
     // Internals
     // ---------------------------------------------------------------------
+
+    fn moves_funds(action: &Action) -> bool {
+        matches!(action, Action::Withdraw(..) | Action::VaultDeposit(..))
+    }
+
+    fn executable_at_of(proposal: &Proposal) -> u64 {
+        if Self::moves_funds(&proposal.action) {
+            proposal.created_at.saturating_add(FUND_MOVEMENT_TIMELOCK_SECS)
+        } else {
+            proposal.created_at
+        }
+    }
 
     fn signers(env: &Env) -> Result<Vec<Address>, TreasuryError> {
         env.storage()

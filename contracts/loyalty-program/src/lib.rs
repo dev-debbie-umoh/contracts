@@ -18,7 +18,7 @@
 
 #![no_std]
 
-use shared::{extend_instance, extend_persistent, is_entry_valid, BPS_DENOMINATOR};
+use shared::{extend_instance, extend_persistent, BPS_DENOMINATOR};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Vec,
 };

@@ -104,8 +104,21 @@ fn arbiter_splits_funds() {
 
     assert_eq!(w.escrow.get_escrow(&w.id).status, EscrowStatus::Resolved);
     let d = w.escrow.get_dispute(&w.id);
-    assert_eq!(d.buyer_bps, Some(3_000));
+    assert_eq!(d.buyer_bps, 3_000);
     assert!(!d.by_default);
+}
+
+#[test]
+fn resolved_dispute_cannot_be_resolved_again() {
+    let w = world();
+    w.escrow
+        .raise_dispute(&w.buyer, &w.id, &DisputeReason::Defective, &None);
+    w.escrow.resolve(&w.id, &3_000);
+
+    assert_eq!(
+        w.escrow.try_resolve(&w.id, &5_000),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
 }
 
 #[test]
