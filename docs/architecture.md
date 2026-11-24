@@ -68,10 +68,12 @@ check cheap.
 | `Payment(id)` | persistent | full payment record |
 | `Order(merchant, order_ref)` | persistent | payment id (the idempotency index) |
 
-**Fees.** `fee = amount * fee_bps / 10_000`, rounded toward zero and floored
-at 0, capped at `MAX_FEE_BPS = 1000` (10%). `quote(amount)` returns
-`(fee, net)` for checkout previews. The floor means a computed fee can never
-be negative and so can never be deducted as a payout bonus.
+**Fees.** `fee = amount * fee_bps / 10_000`, rounded half up (a fractional
+part of 0.5 or more rounds away from zero) and floored at 0, capped at
+`MAX_FEE_BPS = 1000` (10%). `quote(amount)` returns `(fee, net)` for checkout
+previews. Half-up rounding means truncation can never quietly underpay the
+treasury, and the floor means a computed fee can never be negative and so can
+never be deducted as a payout bonus.
 
 **Refunds** are authorized by the payment's settlement account, because that
 account holds the funds. A refund can be partial and repeated, up to the gross
@@ -125,17 +127,22 @@ Every change is a proposal:
 
 | Action | Effect on execute |
 |---|---|
-| `Withdraw(token, to, amount)` | Pays out. Blocked while frozen. |
+| `Withdraw(token, to, amount)` | Pays out after a one-day timelock. Blocked while frozen. |
 | `AddSigner(addr)` | Max 10 signers, no duplicates |
 | `RemoveSigner(addr)` | Rejected if signers would drop below threshold. Cancels every open proposal the removed signer made. |
 | `SetThreshold(n)` | `1 <= n <= signers` |
 | `Unfreeze` | Clears an emergency freeze |
 | `ApproveVault(vault)` / `RevokeVault(vault)` | Allows (up to 5) or stops deposits into a yield vault |
-| `VaultDeposit(vault, token, amount)` | Moves idle funds into an approved vault. Blocked while frozen. |
+| `VaultDeposit(vault, token, amount)` | Moves idle funds into an approved vault after a one-day timelock. Blocked while frozen. |
 | `VaultWithdraw(vault, shares)` | Redeems back into the treasury. Allowed while frozen and after revocation. |
 
 - Execution counts approvals only from **current** signers, so a removed
   signer's earlier approvals stop counting.
+- `Withdraw` and `VaultDeposit` are timelocked: they cannot execute until
+  `FUND_MOVEMENT_TIMELOCK_SECS` (one day) after creation. `executable_at(id)`
+  reports the earliest execution timestamp. The delay gives signers time to
+  freeze the treasury if a key is compromised; `VaultWithdraw` and the
+  governance actions execute immediately once approved.
 - Proposals expire 7 days after creation.
 - **Yield vaults** implement `deposit(from, amount) -> shares`,
   `withdraw(owner, shares) -> amount` and `shares(owner)`. A deposit grants

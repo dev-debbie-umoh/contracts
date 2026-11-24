@@ -109,6 +109,19 @@ fn arbiter_splits_funds() {
 }
 
 #[test]
+fn resolved_dispute_cannot_be_resolved_again() {
+    let w = world();
+    w.escrow
+        .raise_dispute(&w.buyer, &w.id, &DisputeReason::Defective, &None);
+    w.escrow.resolve(&w.id, &3_000);
+
+    assert_eq!(
+        w.escrow.try_resolve(&w.id, &5_000),
+        Err(Ok(EscrowError::InvalidStatus))
+    );
+}
+
+#[test]
 fn arbiter_cannot_rule_after_deadline() {
     let w = world();
     w.escrow

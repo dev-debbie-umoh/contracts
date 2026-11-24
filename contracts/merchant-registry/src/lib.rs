@@ -86,6 +86,15 @@ pub struct MerchantStatusChanged {
     pub status: MerchantStatus,
 }
 
+/// One compact event for an administrative batch operation. Individual
+/// status events are intentionally not emitted by `approve_many`.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MerchantBatchStatusChanged {
+    pub requested: u32,
+    pub changed: u32,
+}
+
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MerchantUpdated {
@@ -252,12 +261,22 @@ impl MerchantRegistry {
         Self::admin(&env)?.require_auth();
         let mut approved = 0;
         for owner in owners.iter() {
-            if Self::apply_status(&env, owner, MerchantStatus::Pending, MerchantStatus::Active)
-                .is_ok()
+            if Self::apply_status_silent(
+                &env,
+                owner,
+                MerchantStatus::Pending,
+                MerchantStatus::Active,
+            )
+            .is_ok()
             {
                 approved += 1;
             }
         }
+        MerchantBatchStatusChanged {
+            requested: owners.len(),
+            changed: approved,
+        }
+        .publish(&env);
         Ok(approved)
     }
 
@@ -433,6 +452,22 @@ impl MerchantRegistry {
         merchant.updated_at = env.ledger().timestamp();
         Self::save(env, &merchant);
         MerchantStatusChanged { owner, status: to }.publish(env);
+        Ok(())
+    }
+
+    fn apply_status_silent(
+        env: &Env,
+        owner: Address,
+        from: MerchantStatus,
+        to: MerchantStatus,
+    ) -> Result<(), RegistryError> {
+        let mut merchant = Self::load(env, &owner)?;
+        if merchant.status != from {
+            return Err(RegistryError::InvalidStatusTransition);
+        }
+        merchant.status = to;
+        merchant.updated_at = env.ledger().timestamp();
+        Self::save(env, &merchant);
         Ok(())
     }
 
